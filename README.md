@@ -4,13 +4,7 @@ This repository contains an automated migration script to convert GitHub Codespa
 
 ## 🚀 Quick Start
 
-Run this single command in your IDX terminal to set up your complete Ruby development environment:
-
-```bash
-curl -sSL https://raw.githubusercontent.com/YOUR_REPO/main/setup-idx.sh | bash
-```
-
-Or copy and run the complete setup script directly:
+Copy and run this setup script to run the complete setup directly:
 
 ```bash
 bash -c '
