@@ -1,22 +1,4 @@
 {
-  "name": "Ruby Development Environment",
-  "icon": "https://raw.githubusercontent.com/devicons/devicon/master/icons/ruby/ruby-original.svg",
-  "previews": [
-    {
-      "port": 3000,
-      "label": "Rails App"
-    },
-    {
-      "port": 3001,
-      "label": "Alt Server"
-    },
-    {
-      "port": 4567,
-      "label": "Sinatra"
-    },
-    {
-      "port": 9292,
-      "label": "Rack"
-    }
-  ]
+  "name": "Workato Connector Development",
+  "icon": "https://raw.githubusercontent.com/devicons/devicon/master/icons/ruby/ruby-original.svg"
 }

@@ -1,17 +1,12 @@
 {
-  "terminal.integrated.defaultProfile.linux": "zsh",
-  "editor.formatOnSave": true,
-  "ruby.format": "rubocop",
-  "ruby.lint": {
-    "rubocop": true
-  },
   "files.watcherExclude": {
     "**/vendor/bundle/**": true,
-    "**/node_modules/**": true,
-    "**/tmp/**": true,
-    "**/log/**": true,
     "**/.bundle/**": true
   },
-  "ruby.lsp.enabled": true,
-  "ruby.lsp.formatter": "auto"
+  "files.exclude": {
+    "**/vendor/bundle": true
+  },
+  "search.exclude": {
+    "**/vendor/bundle": true
+  }
 }

@@ -1,107 +1,51 @@
-# .idx/dev.nix
 { pkgs, ... }: {
-  # Define which packages to install
+  # Essential packages only
   packages = [
+    # Ruby environment
     pkgs.ruby_3_3
     pkgs.bundler
-    pkgs.nodejs_20
-    pkgs.git
-    pkgs.gh  # GitHub CLI
-    pkgs.zsh
-    pkgs.oh-my-zsh
     
-    # Build dependencies
+    # Build essentials for native gems (required by Workato SDK dependencies)
     pkgs.gcc
     pkgs.gnumake
-    pkgs.icu
-    pkgs.file  # for libmagic
-    pkgs.cmake
-    pkgs.pkg-config
     pkgs.openssl
+    pkgs.libxml2  # Often needed for XML parsing gems
+    pkgs.libxslt  # XSLT support
     
-    # Ruby development tools
-    pkgs.rubyPackages_3_3.solargraph
-    pkgs.rubocop
+    # Version control
+    pkgs.git
+    
+    # Basic shell
+    pkgs.bash
   ];
 
-  # Environment variables
   env = {
-    RAILS_ENV = "development";
-    BUNDLE_JOBS = "4";
-    BUNDLE_RETRY = "3";
-    BUNDLE_WITHOUT = "production";
+    # Minimal environment variables
     BUNDLE_PATH = "vendor/bundle";
+    BUNDLE_JOBS = "4";
   };
 
-  # IDX configuration
   idx = {
-    # Define workspace lifecycle hooks
     workspace = {
+      # Simple, explicit setup - no magic
       onCreate = {
-        # Install Ruby dependencies
-        bundle-install = {
+        setup = {
           runIn = "terminal";
           command = ''
-            gem install bundler
-            bundle config set --local path "vendor/bundle"
-            
-            if [ -f Gemfile ]; then
-              if [ ! -f Gemfile.lock ]; then
-                echo "No Gemfile.lock found, generating it..."
-                bundle install || (
-                  echo "Bundle install failed, attempting to install known gems individually..."
-                  gem install workato-connector-sdk charlock_holmes -v "~> 0.7.7" rubocop pry rspec
-                  bundle lock --add-platform x86_64-linux || echo "Warning: Could not generate complete Gemfile.lock"
-                )
-              else
-                echo "Gemfile.lock exists, running bundle install..."
-                bundle install
-              fi
-            else
-              echo "No Gemfile found, skipping bundle operations"
-            fi
-            
-            echo "Setup complete!"
-          '';
-        };
-      };
-      
-      onStart = {
-        # Commands to run when workspace starts
-        start-server = {
-          runIn = "terminal";
-          command = ''
-            if [ -f bin/dev ]; then
-              bin/dev
-            elif [ -f config.ru ]; then
-              bundle exec rails server -b 0.0.0.0
-            fi
+            echo "==================================="
+            echo "Workato SDK Development Environment"
+            echo "==================================="
+            echo ""
+            echo "Setup Instructions:"
+            echo "1. Run: bundle init (if no Gemfile exists)"
+            echo "2. Add to Gemfile: gem 'workato-connector-sdk'"
+            echo "3. Run: bundle install"
+            echo "4. Run: workato --help"
+            echo ""
+            echo "Your bundle path is: vendor/bundle"
           '';
         };
       };
     };
-
-    # Configure previews (equivalent to port forwarding)
-    previews = {
-      enable = true;
-      previews = {
-        web = {
-          command = ["bundle" "exec" "rails" "server" "-b" "0.0.0.0" "-p" "$PORT"];
-          manager = "web";
-          env = {
-            PORT = "3000";
-          };
-        };
-      };
-    };
-
-    # Extensions to install
-    extensions = [
-      "anthropic.claude-code"
-      "github.copilot"
-      "shopify.ruby-lsp"
-      "kaiwood.endwise"
-      "castwide.solargraph"
-    ];
   };
 }
