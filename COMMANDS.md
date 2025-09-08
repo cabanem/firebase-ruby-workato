@@ -7,8 +7,24 @@
 # Test connection
 workato exec test settings.yaml
 
-# Test specific action
-workato exec action create_user input.json settings.yaml
+# Test an action
+workato exec action get_record input.json settings.yaml
 
-# Test trigger
-workato exec trigger new_user settings.yaml
+# Test a trigger
+workato exec trigger new_record settings.yaml
+
+# Open interactive console
+workato console
+```
+
+### Development
+```bash
+# Install new gems
+bundle add <gem_name>
+
+# Run tests
+bundle exec rspec
+
+# Check for issues
+workato check connector.rb
+```

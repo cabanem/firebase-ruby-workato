@@ -280,19 +280,67 @@ Thumbs.db
 .vscode/
 .idea/
 ```
+## 8 `spec/connector_spec.rb`
+```ruby
+```ruby
+require 'workato-connector-sdk'
+require 'webmock/rspec'
 
-## 8 `README.md`
+RSpec.describe 'Connector' do
+  let(:connector) { Workato::Connector::Sdk::Connector.from_file('./connector.rb') }
+  let(:settings) { { api_key: 'test_key', subdomain: 'test' } }
+  
+  describe 'connection' do
+    it 'has required fields' do
+      fields = connector.connection.fields
+      expect(fields.map { |f| f[:name] }).to include('api_key', 'subdomain')
+    end
+  end
+  
+  describe 'test connection' do
+    it 'makes a GET request to /me' do
+      stub_request(:get, 'https://test.example.com/api/v1/me')
+        .to_return(status: 200, body: '{"status":"ok"}')
+      
+      result = connector.test(settings)
+      expect(result).to eq({ "status" => "ok" })
+    end
+  end
+  
+  describe 'get_record action' do
+    it 'retrieves a record by ID' do
+      stub_request(:get, 'https://test.example.com/api/v1/records/123')
+        .to_return(status: 200, body: '{"id":"123","name":"Test"}')
+      
+      result = connector.actions.get_record.execute(settings, { 'id' => '123' })
+      expect(result['id']).to eq('123')
+      expect(result['name']).to eq('Test')
+    end
+  end
+end
+```
+---
 
-```markdown
-# Workato Connector Development
-
+# Getting Started
 ## Quick Start
-
-1. Make setup executable: chmod +x setup.sh
-2. Run setup: ./setup.sh  
-3. Copy settings: cp settings.yaml.example settings.yaml
-4. Edit settings.yaml with your credentials
-5. Test: workato exec test settings.yaml
+1. Create the IDX structure (if necessary)
+```bash
+mkdir -p .idx
+```
+2. Copy files into project directory
+3. Make setup script executable
+```bash
+chmod +x setup.sh
+```
+4. Run setup
+```bash
+./setup.sh
+```
+5. Add credentials to `settings.yaml`
+6. Test your connection
+```bash
+workato exec test settings.yaml
+```
 
 ## Common Commands
 
@@ -308,43 +356,45 @@ Testing a trigger:
 Opening console:
 - workato console
 
-## Project Files
-
-- connector.rb - Main connector definition
-- settings.yaml - Your credentials (git-ignored)
-- input.json - Test input for actions
-- spec/ - RSpec tests
-- vendor/bundle/ - Installed gems (git-ignored)
-
-## Test Input Example
-
+## Test Input
+### Example input
 Create input.json:
-
+```json
     {
       "id": "12345"
     }
+```
 
-## Console Testing
+### Console Testing
+```bash
+# In the console
+workato console
 
-    workato console
-    c = Workato::Connector::Sdk::Connector.from_file('./connector.rb')
-    settings = { api_key: 'test', subdomain: 'demo' }
-    c.actions.get_record.execute(settings, { id: '123' })
+# Load and test
+c = Workato::Connector::Sdk::Connector.from_file('./connector.rb')
+settings = { api_key: 'test', subdomain: 'demo' }
+c.actions.get_record.execute(settings, { id: '123' })
+```
 
 ## Troubleshooting
 
 SSL Issues:
-- export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+```bash
+export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+```
 
 Bundle Issues:
-- bundle config set --local path 'vendor/bundle'
-- bundle install --jobs 4
+```bash
+bundle config set --local path 'vendor/bundle'
+bundle install --jobs 4
+```
 
 Permission Issues:
-- chmod +x setup.sh
+```bash
+chmod +x setup.sh
+```
 
 ## Quick Reference
-
 Actions:
 - workato exec action [name] [input] [settings]
 
@@ -356,6 +406,5 @@ Testing:
 - workato check connector.rb
 
 ## Support
-
 Check Workato SDK documentation for more details.
-```
+
