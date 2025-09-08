@@ -29,22 +29,7 @@
     workspace = {
       # Simple, explicit setup - no magic
       onCreate = {
-        setup = {
-          runIn = "terminal";
-          command = ''
-            echo "==================================="
-            echo "Workato SDK Development Environment"
-            echo "==================================="
-            echo ""
-            echo "Setup Instructions:"
-            echo "1. Run: bundle init (if no Gemfile exists)"
-            echo "2. Add to Gemfile: gem 'workato-connector-sdk'"
-            echo "3. Run: bundle install"
-            echo "4. Run: workato --help"
-            echo ""
-            echo "Your bundle path is: vendor/bundle"
-          '';
-        };
+        setup - "bash .idx/setup.sh"
       };
     };
   };
