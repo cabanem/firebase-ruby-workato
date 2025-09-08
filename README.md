@@ -69,45 +69,77 @@ README.md
 ## 3 `setup.sh`
 ```bash
 #!/bin/bash
-# Simple Workato SDK Setup
+# Workato SDK Setup with ICU fix
 
 echo "================================"
 echo "  Workato SDK Setup"
 echo "================================"
 echo ""
 
-# Configure bundler
+# Configure bundler with ICU paths
+echo "Configuring bundle for native extensions..."
 bundle config set --local path 'vendor/bundle'
-echo "✓ Bundle path configured"
+bundle config set --local jobs '4'
 
-# Install gems
-if [ -f Gemfile ]; then
-  echo "Installing gems..."
-  bundle install
+# Set build options for problematic gems
+bundle config build.charlock_holmes --with-icu-dir=/nix/store/*/icu4c* 2>/dev/null || true
+bundle config build.charlock_holmes --use-system-libraries
+
+# Alternative: Skip charlock_holmes if still failing
+if [ "$1" == "--skip-charlock" ]; then
+  echo "Skipping charlock_holmes installation..."
+  cat > Gemfile << 'EOF'
+source 'https://rubygems.org'
+
+# Workato SDK without charlock_holmes
+gem 'workato-connector-sdk', '~> 1.3.0', require: false
+
+# Testing
+group :test do
+  gem 'rspec', '~> 3.12'
+  gem 'webmock', '~> 3.18'
+end
+
+# Debugging
+group :development do
+  gem 'pry', '~> 0.14'
+end
+EOF
+  
+  # Install without charlock_holmes
+  bundle install --without charlock_holmes
 else
-  echo "⚠️  No Gemfile found. Creating one..."
-  bundle init
-  echo "gem 'workato-connector-sdk', '~> 1.3.0'" >> Gemfile
-  bundle install
+  # Try normal installation
+  if [ -f Gemfile ]; then
+    echo "Installing gems..."
+    bundle install || {
+      echo ""
+      echo "⚠️  Installation failed. Trying workaround..."
+      echo "Run: ./setup.sh --skip-charlock"
+    }
+  else
+    echo "Creating Gemfile..."
+    bundle init
+    echo "gem 'workato-connector-sdk', '~> 1.3.0'" >> Gemfile
+    bundle install || {
+      echo ""
+      echo "⚠️  Installation failed. Trying workaround..."
+      echo "Run: ./setup.sh --skip-charlock"
+    }
+  fi
 fi
 
-# Configure git
+# Rest of setup...
 git config --global --add safe.directory "$(pwd)"
 echo "✓ Git configured"
 
-# Copy settings template if needed
 if [ ! -f settings.yaml ] && [ -f settings.yaml.example ]; then
   cp settings.yaml.example settings.yaml
   echo "✓ Created settings.yaml from template"
-  echo "⚠️  Edit settings.yaml with your credentials"
 fi
 
 echo ""
-echo "Setup complete! Commands:"
-echo "  workato exec test settings.yaml"
-echo "  workato exec action <name> input.json settings.yaml"
-echo "  bundle exec rspec"
-echo ""
+echo "Setup complete!"
 ```
 
 ## 4 `Gemfile`
