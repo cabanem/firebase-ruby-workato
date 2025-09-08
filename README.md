@@ -1,331 +1,361 @@
-# GitHub Codespaces to Google Firebase Studio (IDX) Migration
+# Setup Development Environment for Workato SDK in IDX
 
-This repository contains an automated migration script to convert GitHub Codespaces `devcontainer.json` configurations to Google Firebase Studio (IDX) format.
+## File Structure
+```
+.idx/
+  ├── dev.nix
+  └── idx.json
+connector.rb
+Gemfile
+.gitignore
+settings.yaml.example
+setup.sh
+README.md
+```
 
-## 🚀 Quick Start
-
-Copy and run this setup script to run the complete setup directly:
-
-```bash
-bash -c '
-mkdir -p .idx .vscode .bundle
-
-# Create dev.nix
-cat > .idx/dev.nix << '\''DEVNIX'\''
+## 1 `.idx/dev.nix`
+```nix
 { pkgs, ... }: {
   packages = [
     pkgs.ruby_3_3
     pkgs.bundler
-    pkgs.nodejs_20
-    pkgs.git
-    pkgs.gh
-    pkgs.zsh
-    pkgs.oh-my-zsh
     pkgs.gcc
     pkgs.gnumake
-    pkgs.icu
-    pkgs.file
-    pkgs.cmake
-    pkgs.pkg-config
+    pkgs.git
     pkgs.openssl
-    pkgs.rubyPackages_3_3.solargraph
-    pkgs.rubocop
   ];
-
+  
   env = {
-    RAILS_ENV = "development";
-    BUNDLE_JOBS = "4";
-    BUNDLE_RETRY = "3";
-    BUNDLE_WITHOUT = "production";
     BUNDLE_PATH = "vendor/bundle";
   };
-
+  
   idx = {
     workspace = {
       onCreate = {
-        bundle-install = {
+        setup = {
           runIn = "terminal";
-          command = "gem install bundler && bundle config set --local path vendor/bundle && if [ -f Gemfile ]; then bundle install; fi";
-        };
-      };
-      onStart = {
-        start-server = {
-          runIn = "terminal";
-          command = "if [ -f bin/dev ]; then bin/dev; elif [ -f config.ru ]; then bundle exec rails server -b 0.0.0.0; fi";
+          command = ''
+            echo "Workato SDK Environment Ready"
+            echo "Run ./setup.sh to initialize"
+          '';
         };
       };
     };
-    previews = {
-      enable = true;
-      previews = {
-        web = {
-          command = ["bundle" "exec" "rails" "server" "-b" "0.0.0.0" "-p" "$PORT"];
-          manager = "web";
-          env = { PORT = "3000"; };
-        };
-      };
-    };
-    extensions = [
-      "anthropic.claude-code"
-      "github.copilot"
-      "shopify.ruby-lsp"
-      "kaiwood.endwise"
-      "castwide.solargraph"
-    ];
   };
 }
-DEVNIX
+```
 
-# Create idx.json
-cat > .idx/idx.json << '\''IDXJSON'\''
+## 2 `.idx/idx.json`
+```json
 {
-  "name": "Ruby Development Environment",
-  "icon": "https://raw.githubusercontent.com/devicons/devicon/master/icons/ruby/ruby-original.svg",
-  "previews": [
-    {"port": 3000, "label": "Rails App"},
-    {"port": 3001, "label": "Alt Server"},
-    {"port": 4567, "label": "Sinatra"},
-    {"port": 9292, "label": "Rack"}
-  ]
+  "name": "Workato Connector Development",
+  "icon": "https://raw.githubusercontent.com/devicons/devicon/master/icons/ruby/ruby-original.svg"
 }
-IDXJSON
+```
 
-# Create and make executable setup.sh
-cat > .idx/setup.sh << '\''SETUP'\'' && chmod +x .idx/setup.sh
+## 3 `setup.sh`
+```bash
 #!/bin/bash
-if [ -x "$(command -v zsh)" ]; then
-  echo "Setting up Zsh with Oh My Zsh..."
-  [ ! -f ~/.zshrc ] && cp ~/.oh-my-zsh/templates/zshrc.zsh-template ~/.zshrc
-  grep -q "RAILS_ENV" ~/.zshrc || echo '\''
-export HISTFILE=~/.zsh_history
-export RAILS_ENV=development
-export BUNDLE_PATH=vendor/bundle
-export EDITOR=code
-alias be="bundle exec"
-alias bi="bundle install"
-alias rs="bundle exec rails server"
-alias rc="bundle exec rails console"'\'' >> ~/.zshrc
-fi
-git config --global --add safe.directory /home/user/workspace
-SETUP
+# Simple Workato SDK Setup
 
-# Create VS Code settings
-cat > .vscode/settings.json << '\''VSCODE'\''
-{
-  "terminal.integrated.defaultProfile.linux": "zsh",
-  "editor.formatOnSave": true,
-  "ruby.format": "rubocop",
-  "ruby.lint": {"rubocop": true},
-  "files.watcherExclude": {
-    "**/vendor/bundle/**": true,
-    "**/node_modules/**": true,
-    "**/tmp/**": true,
-    "**/log/**": true,
-    "**/.bundle/**": true
-  },
-  "ruby.lsp.enabled": true,
-  "ruby.lsp.formatter": "auto"
-}
-VSCODE
-
-# Create Bundle config
-cat > .bundle/config << '\''BUNDLE'\''
----
-BUNDLE_PATH: "vendor/bundle"
-BUNDLE_JOBS: "4"
-BUNDLE_RETRY: "3"
-BUNDLE_WITHOUT: "production"
-BUNDLE
-
-echo "✅ All IDX configuration files created successfully!"
-echo "📝 Files created:"
-echo "   - .idx/dev.nix"
-echo "   - .idx/idx.json"
-echo "   - .idx/setup.sh (executable)"
-echo "   - .vscode/settings.json"
-echo "   - .bundle/config"
+echo "================================"
+echo "  Workato SDK Setup"
+echo "================================"
 echo ""
-echo "🚀 Next steps:"
-echo "   1. Refresh your IDX workspace to apply the Nix configuration"
-echo "   2. Run: ./.idx/setup.sh"
-echo "   3. Run: bundle install"
-'
+
+# Configure bundler
+bundle config set --local path 'vendor/bundle'
+echo "✓ Bundle path configured"
+
+# Install gems
+if [ -f Gemfile ]; then
+  echo "Installing gems..."
+  bundle install
+else
+  echo "⚠️  No Gemfile found. Creating one..."
+  bundle init
+  echo "gem 'workato-connector-sdk', '~> 1.3.0'" >> Gemfile
+  bundle install
+fi
+
+# Configure git
+git config --global --add safe.directory "$(pwd)"
+echo "✓ Git configured"
+
+# Copy settings template if needed
+if [ ! -f settings.yaml ] && [ -f settings.yaml.example ]; then
+  cp settings.yaml.example settings.yaml
+  echo "✓ Created settings.yaml from template"
+  echo "⚠️  Edit settings.yaml with your credentials"
+fi
+
+echo ""
+echo "Setup complete! Commands:"
+echo "  workato exec test settings.yaml"
+echo "  workato exec action <name> input.json settings.yaml"
+echo "  bundle exec rspec"
+echo ""
 ```
 
-## 📋 What This Script Does
+## 4 `Gemfile`
+```ruby
+source 'https://rubygems.org'
 
-The automated migration script creates a complete IDX development environment equivalent to your GitHub Codespaces setup by:
+# Workato Connector SDK
+gem 'workato-connector-sdk', '~> 1.3.0'
 
-1. **Creating IDX Configuration Files**
-   - `.idx/dev.nix` - Nix package definitions and environment setup
-   - `.idx/idx.json` - Workspace metadata and preview configurations
-   - `.idx/setup.sh` - Shell environment initialization script
+# Testing
+group :test do
+  gem 'rspec', '~> 3.12'
+  gem 'webmock', '~> 3.18'
+  gem 'vcr', '~> 6.2'
+end
 
-2. **Setting Up Development Tools**
-   - Ruby 3.3 with Bundler
-   - Node.js 20
-   - Git and GitHub CLI
-   - Zsh with Oh My Zsh
-   - Build dependencies (gcc, make, cmake, etc.)
-   - Ruby development tools (Solargraph, RuboCop)
-
-3. **Configuring VS Code**
-   - `.vscode/settings.json` - Editor preferences and Ruby LSP settings
-   - Extension recommendations
-   - File watcher exclusions for better performance
-
-4. **Bundle Configuration**
-   - `.bundle/config` - Bundler settings for consistent gem management
-   - Local vendor/bundle path configuration
-   - Parallel job settings for faster installations
-
-## 🔄 Migration Mapping
-
-| GitHub Codespaces | Google Firebase Studio (IDX) | Notes |
-|-------------------|------------------------------|-------|
-| `devcontainer.json` | `.idx/dev.nix` | Nix-based configuration |
-| Docker image | Nix packages | Declarative package management |
-| Volume mounts | Persistent workspace | Entire workspace persists |
-| `forwardPorts` | Preview configurations | Auto-detected ports |
-| `postCreateCommand` | `workspace.onCreate` | Lifecycle hooks |
-| `postAttachCommand` | `workspace.onStart` | Startup commands |
-| apt packages | Nix packages | Most packages have equivalents |
-| VS Code customizations | `.vscode/settings.json` + extensions | Direct file configuration |
-
-## 🛠️ Post-Installation Steps
-
-After running the automated script:
-
-1. **Refresh your IDX workspace** to apply the Nix configuration
-2. **Initialize your shell environment**:
-   ```bash
-   ./.idx/setup.sh
-   ```
-3. **Install Ruby dependencies**:
-   ```bash
-   bundle install
-   ```
-4. **Start your application**:
-   ```bash
-   bundle exec rails server  # or your specific start command
-   ```
-
-## 📦 Environment Details
-
-### Installed Packages
-- **Ruby**: 3.3 with Bundler
-- **Node.js**: 20.x
-- **Shell**: Zsh with Oh My Zsh
-- **Version Control**: Git, GitHub CLI
-- **Build Tools**: GCC, Make, CMake, pkg-config
-- **Libraries**: OpenSSL, ICU, libmagic
-- **Ruby Tools**: Solargraph, RuboCop
-
-### Environment Variables
-```bash
-RAILS_ENV=development
-BUNDLE_PATH=vendor/bundle
-BUNDLE_JOBS=4
-BUNDLE_RETRY=3
-BUNDLE_WITHOUT=production
+# Debugging
+group :development do
+  gem 'pry', '~> 0.14'
+end
 ```
 
-### Shell Aliases
-```bash
-be  # bundle exec
-bi  # bundle install
-rs  # bundle exec rails server
-rc  # bundle exec rails console
+## 5 `connector.rb`
+```ruby
+{
+  title: "My Connector",
+  
+  connection: {
+    fields: [
+      {
+        name: "api_key",
+        control_type: "password",
+        label: "API Key",
+        optional: false,
+        hint: "Your API key from the platform"
+      },
+      {
+        name: "subdomain",
+        control_type: "text",
+        label: "Subdomain",
+        optional: false,
+        hint: "Your account subdomain (e.g., 'mycompany')"
+      }
+    ],
+    
+    base_uri: lambda do |connection|
+      "https://#{connection['subdomain']}.example.com/api/v1"
+    end,
+    
+    authorization: {
+      type: "custom_auth",
+      
+      apply: lambda do |connection|
+        headers("Authorization": "Bearer #{connection['api_key']}")
+      end
+    }
+  },
+  
+  test: lambda do |connection|
+    get("/me")
+  end,
+  
+  actions: {
+    # Example action
+    get_record: {
+      title: "Get record",
+      description: "Retrieves a single record by ID",
+      
+      input_fields: lambda do
+        [
+          { name: "id", type: "string", optional: false }
+        ]
+      end,
+      
+      output_fields: lambda do
+        [
+          { name: "id", type: "string" },
+          { name: "name", type: "string" },
+          { name: "created_at", type: "datetime" }
+        ]
+      end,
+      
+      execute: lambda do |connection, input|
+        get("/records/#{input['id']}")
+      end
+    }
+  },
+  
+  triggers: {
+    # Example trigger
+    new_record: {
+      title: "New record",
+      description: "Triggers when a new record is created",
+      
+      input_fields: lambda do
+        []
+      end,
+      
+      poll: lambda do |connection, input, closure|
+        closure ||= { "last_id": 0 }
+        
+        records = get("/records", 
+          since_id: closure["last_id"],
+          limit: 100
+        )
+        
+        next_closure = records.any? ? { "last_id": records.last["id"] } : closure
+        
+        {
+          events: records,
+          next_poll: next_closure
+        }
+      end,
+      
+      output_fields: lambda do
+        [
+          { name: "id", type: "string" },
+          { name: "name", type: "string" },
+          { name: "created_at", type: "datetime" }
+        ]
+      end
+    }
+  },
+  
+  object_definitions: {
+    record: {
+      fields: lambda do
+        [
+          { name: "id", type: "string" },
+          { name: "name", type: "string" },
+          { name: "description", type: "string" },
+          { name: "created_at", type: "datetime" },
+          { name: "updated_at", type: "datetime" }
+        ]
+      end
+    }
+  }
+}
 ```
 
-### Available Ports
-- 3000 - Rails App (default)
-- 3001 - Alternative Server
-- 4567 - Sinatra
-- 9292 - Rack
+## 6 Example `settings.yaml.example`
+```yaml
+# Copy this file to settings.yaml and fill in your credentials
+# DO NOT commit settings.yaml to version control
 
-## 🔧 Customization
+# Connection settings
+api_key: your_api_key_here
+subdomain: your_subdomain_here
 
-To modify the configuration for your specific needs:
-
-### Adding Packages
-Edit `.idx/dev.nix` and add packages to the `packages` array:
-```nix
-packages = [
-  # ... existing packages ...
-  pkgs.postgresql_15  # Example: Add PostgreSQL
-];
+# Optional: Environment
+environment: sandbox  # or production
 ```
 
-### Changing Ruby Version
-Replace `pkgs.ruby_3_3` with your desired version:
-```nix
-packages = [
-  pkgs.ruby_3_2  # Use Ruby 3.2 instead
-  # ...
-];
+## 7 `.gitignore`
+```gitignore
+# Credentials - NEVER commit these
+settings.yaml
+settings.yml
+.env
+*.key
+*.pem
+
+# Bundle
+vendor/bundle/
+.bundle/
+
+# Testing
+spec/fixtures/vcr_cassettes/
+coverage/
+tmp/
+
+# IDX
+.idx/tmp/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
 ```
 
-### Adding Environment Variables
-Edit the `env` section in `.idx/dev.nix`:
-```nix
-env = {
-  # ... existing variables ...
-  MY_CUSTOM_VAR = "value";
-};
+## 8 `README.md`
+
+```markdown
+# Workato Connector Development
+
+## Quick Start
+
+1. Make setup executable: chmod +x setup.sh
+2. Run setup: ./setup.sh  
+3. Copy settings: cp settings.yaml.example settings.yaml
+4. Edit settings.yaml with your credentials
+5. Test: workato exec test settings.yaml
+
+## Common Commands
+
+Testing connection:
+- workato exec test settings.yaml
+
+Testing an action:
+- workato exec action get_record input.json settings.yaml
+
+Testing a trigger:
+- workato exec trigger new_record settings.yaml
+
+Opening console:
+- workato console
+
+## Project Files
+
+- connector.rb - Main connector definition
+- settings.yaml - Your credentials (git-ignored)
+- input.json - Test input for actions
+- spec/ - RSpec tests
+- vendor/bundle/ - Installed gems (git-ignored)
+
+## Test Input Example
+
+Create input.json:
+
+    {
+      "id": "12345"
+    }
+
+## Console Testing
+
+    workato console
+    c = Workato::Connector::Sdk::Connector.from_file('./connector.rb')
+    settings = { api_key: 'test', subdomain: 'demo' }
+    c.actions.get_record.execute(settings, { id: '123' })
+
+## Troubleshooting
+
+SSL Issues:
+- export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+
+Bundle Issues:
+- bundle config set --local path 'vendor/bundle'
+- bundle install --jobs 4
+
+Permission Issues:
+- chmod +x setup.sh
+
+## Quick Reference
+
+Actions:
+- workato exec action [name] [input] [settings]
+
+Triggers:
+- workato exec trigger [name] [settings]
+
+Testing:
+- bundle exec rspec
+- workato check connector.rb
+
+## Support
+
+Check Workato SDK documentation for more details.
 ```
-
-## 🐛 Troubleshooting
-
-### Workspace doesn't recognize changes
-- Refresh the workspace or restart IDX
-- Ensure `.idx/dev.nix` has valid Nix syntax
-
-### Bundle install fails
-```bash
-# Clear bundle cache and retry
-rm -rf vendor/bundle
-bundle install --jobs 4 --retry 3
-```
-
-### Gems with native extensions fail
-```bash
-# Ensure all build dependencies are installed
-nix-shell -p gcc gnumake
-bundle install
-```
-
-### Port not accessible
-- Check the preview configuration in `.idx/idx.json`
-- Ensure your application binds to `0.0.0.0` not `localhost`
-
-## 📚 Additional Resources
-
-- [Google Firebase Studio (IDX) Documentation](https://developers.google.com/idx)
-- [Nix Package Search](https://search.nixos.org/packages)
-- [Ruby on Rails Guides](https://guides.rubyonrails.org/)
-- [Bundler Documentation](https://bundler.io/docs.html)
-
-## 📄 License
-
-This migration script is provided as-is for development convenience. Adapt it to your specific needs.
-
-## 🤝 Contributing
-
-To improve this migration script:
-
-1. Test with your specific devcontainer configuration
-2. Document any package mapping discoveries
-3. Share additional lifecycle hooks or optimizations
-4. Report issues with specific gem or package installations
-
----
-
-**Pro Tip**: Save the setup script as `setup-idx.sh` in your repository root for easy team onboarding:
-
-```bash
-# Team members can then simply run:
-chmod +x setup-idx.sh && ./setup-idx.sh
-```
-
-This ensures consistent development environments across your team with a single command! 🚀
