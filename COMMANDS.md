@@ -28,8 +28,10 @@ bundle exec rspec
 # Check for issues
 workato check connector.rb
 ```
+---
 
-### Manual Install COmmands
+## Troubleshooting
+### Manual Install Commands
 ```bash
 # Check available ICU
 ls /nix/store/*/icu*
