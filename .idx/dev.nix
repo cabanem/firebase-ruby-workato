@@ -23,6 +23,14 @@
     # Minimal environment variables
     BUNDLE_PATH = "vendor/bundle";
     BUNDLE_JOBS = "4";
+
+    # Package deps
+    ICU_DIR = "${pkgs.icu.dev}";
+    PKG_CONFIG_PATH = "${pkgs.icu.dev}/lib/pkgconfig";
+    
+    # Additional build flags
+    BUNDLE_BUILD__CHARLOCK_HOLMES = "--with-icu-dir=${pkgs.icu.dev}";
+  
   };
 
   idx = {

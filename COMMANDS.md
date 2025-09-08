@@ -28,3 +28,35 @@ bundle exec rspec
 # Check for issues
 workato check connector.rb
 ```
+
+### Manual Install COmmands
+```bash
+# Check available ICU
+ls /nix/store/*/icu*
+
+# Find pkg-config
+which pkg-config
+pkg-config --list-all | grep icu
+
+# Set environment manually
+export PKG_CONFIG_PATH="/nix/store/*/icu*/lib/pkgconfig:$PKG_CONFIG_PATH"
+export ICU_DIR="/nix/store/*/icu*"
+
+# Try bundle with verbose output
+bundle config set --local path 'vendor/bundle'
+bundle install --verbose
+
+# If still failing, install without native extensions
+gem install workato-connector-sdk --ignore-dependencies
+```
+
+### Rebuild from Partial/Failed Build
+```bash
+# First try:
+bundle config build.charlock_holmes --use-system-libraries
+bundle install
+
+# If that fails, try skipping charlock_holmes
+gem install workato-connector-sdk --ignore-dependencies
+gem install rest-client json jwt concurrent-ruby
+```
