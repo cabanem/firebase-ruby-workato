@@ -118,8 +118,13 @@ if [ ! -f Gemfile ]; then
   cat > Gemfile <<'GEMFILE'
 source "https://rubygems.org"
 
-# Workato Connector SDK (CLI provides `workato` command)
 gem "workato-connector-sdk", "~> 1.3"
+
+group :test do
+  gem "rspec",   "~> 3.13"
+  gem "webmock", "~> 3.18"
+  gem "vcr",     "~> 6.2"
+end
 GEMFILE
 fi
 
@@ -128,7 +133,8 @@ bundle config set path "${BUNDLE_PATH}"
 bundle config set clean true
 
 # If ICU path is set by dev.nix, Bundler will pass it to charlock_holmes
-bundle install --retry 2 --without "development test rubocop"
+bundle install --retry 2
+bundle binstubs workato-connector-sdk --path=bin
 
 # Create a binstub for the CLI so we can just run ./bin/workato
 bundle binstubs workato-connector-sdk --path=bin
@@ -162,6 +168,256 @@ gem "workato-connector-sdk", "~> 1.3"
 ```
 
 > Recent gem versions require Ruby **≥ 2.7.6**; the Nix file above installs Ruby 3.1.x which is supported by Workato’s SDK docs. ([RubyGems][4])
+
+### 4) `connector.rb` (root)
+Minimal, public API to get working network calls with no secrets. 
+- `base_url` enables relative `get('/post') calls
+- `poll` returns the 3-key struct expected by Workato
+
+```ruby
+# frozen_string_literal: true
+
+{
+  title: 'JSONPlaceholder Demo',
+
+  connection: {
+    fields: [
+      {
+        name: 'api_base',
+        label: 'Base URL',
+        hint: 'Override if needed',
+        default: 'https://jsonplaceholder.typicode.com'
+      }
+    ]
+    # No auth needed for JSONPlaceholder.
+  },
+
+  # Use relative paths everywhere else (get '/posts', etc.)
+  base_uri: lambda { |connection|
+    connection['api_base'] || 'https://jsonplaceholder.typicode.com'
+  },
+
+  # Called by Workato/SDK to validate the connection. Keep it cheap.
+  test: lambda { |_connection|
+    get('/posts').params(_limit: 1)
+  },
+
+  object_definitions: {
+    post: {
+      # Define with args to keep it "dynamic" per SDK guidance.
+      # (Even if you don't use the args, pass them.) 
+      fields: lambda do |_connection, _config_fields, _object_definitions|
+        [
+          { name: 'userId', type: :integer, label: 'User ID' },
+          { name: 'id',     type: :integer },
+          { name: 'title',  type: :string },
+          { name: 'body',   type: :string }
+        ]
+      end
+    }
+  },
+
+  actions: {
+    get_post_by_id: {
+      title: 'Get post by ID',
+
+      input_fields: lambda do
+        [{ name: 'id', type: :integer, optional: false, hint: 'e.g. 1' }]
+      end,
+
+      execute: lambda { |_connection, input|
+        get("/posts/#{input['id']}")
+      },
+
+      output_fields: lambda do |object_definitions, _connection, _config_fields|
+        object_definitions['post']
+      end,
+
+      sample_output: lambda do
+        { 'userId' => 1, 'id' => 1, 'title' => 'sample', 'body' => '...' }
+      end
+    },
+
+    search_posts: {
+      title: 'Search posts',
+
+      input_fields: lambda do
+        [
+          { name: 'user_id', type: :integer, optional: true, hint: 'Filter by userId' },
+          { name: 'limit',   type: :integer, optional: true, default: 5 }
+        ]
+      end,
+
+      execute: lambda { |_connection, input|
+        params = {}
+        params[:userId] = input['user_id'] if input['user_id']
+        params[:_limit] = input['limit'] || 5
+        records = get('/posts').params(params)
+        { 'records' => records }
+      },
+
+      output_fields: lambda do |object_definitions, _connection, _config_fields|
+        [
+          {
+            name: 'records',
+            type: :array,
+            of: :object,
+            properties: object_definitions['post']
+          }
+        ]
+      end,
+
+      sample_output: lambda do
+        { 'records' => [{ 'userId' => 1, 'id' => 1, 'title' => 'sample', 'body' => '...' }] }
+      end
+    }
+  },
+
+  triggers: {
+    new_posts: {
+      title: 'New posts by ID (polling)',
+
+      input_fields: lambda do
+        [
+          { name: 'since_id', type: :integer, optional: true, default: 0,
+            hint: 'Only emit posts with id > since_id' },
+          { name: 'limit', type: :integer, optional: true, default: 5,
+            hint: 'Events per poll' }
+        ]
+      end,
+
+      poll: lambda { |_connection, input, closure, _eis, _eos|
+        since_id = (closure && closure['since_id']) || input['since_id'] || 0
+        limit    = input['limit'] || 5
+
+        all = get('/posts') # array of posts
+        new_records = all.select { |r| r['id'].to_i > since_id }
+                         .sort_by { |r| r['id'].to_i }
+        batch = new_records.first(limit)
+        next_since = batch.map { |r| r['id'].to_i }.max || since_id
+
+        {
+          events: batch,
+          next_poll: { 'since_id' => next_since },
+          can_poll_more: new_records.size > limit
+        }
+      },
+
+      dedup: lambda { |record| record['id'].to_s },
+
+      output_fields: lambda do |object_definitions, _connection, _config_fields|
+        object_definitions['post']
+      end,
+
+      sample_output: lambda do
+        { 'userId' => 1, 'id' => 101, 'title' => 'sample', 'body' => '...' }
+      end
+    }
+  }
+}
+
+```
+### 5) `scripts/verify_sdk.rb`
+But does it work?
+- Uses the documented `Settings.from_default_file` and `Connector.from_file(...) helpers.
+
+```ruby
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require 'json'
+require 'workato-connector-sdk'
+
+settings  = Workato::Connector::Sdk::Settings.from_default_file
+connector = Workato::Connector::Sdk::Connector.from_file('connector.rb', settings)
+
+puts "Workato SDK: #{Workato::Connector::Sdk::VERSION}"
+puts "Connector title: #{connector.title || '(no title)'}"
+puts "Actions:  #{connector.actions.keys.join(', ')}"
+puts "Triggers: #{connector.triggers.keys.join(', ')}"
+
+# Connection smoke test (should not raise)
+connector.test(settings)
+puts "Connection test: OK"
+
+# Run a simple action
+out = connector.actions.get_post_by_id.execute(settings, { 'id' => 1 })
+preview = { 'id' => out['id'], 'title' => out['title'] }
+puts "get_post_by_id(1):\n#{JSON.pretty_generate(preview)}"
+```
+
+## 6) `spec/spec_helper.rb
+Basic RSpec + VCR + WebMock wiring for testing
+- VCR records HTTP once, then replays (recommended pattern per SDK docs)
+```ruby
+# frozen_string_literal: true
+
+require 'bundler/setup'
+require 'rspec'
+require 'webmock/rspec'
+require 'vcr'
+require 'workato-connector-sdk'
+
+VCR.configure do |c|
+  c.cassette_library_dir = 'spec/cassettes'
+  c.hook_into :webmock
+  c.configure_rspec_metadata!
+  c.default_cassette_options = { record: :once }
+end
+
+RSpec.configure do |config|
+  config.example_status_persistence_file_path = 'spec/examples.txt'
+  config.order = :random
+  Kernel.srand config.seed
+end
+```
+
+### 7) `spec/connector_spec.rb`
+Tiny tests -- connection check, 1 action, 1 trigger
+- Pattern for `action.execute(settings, input)` as recommended by RSpec guide for SDK
+- `poll_page` is helper for testing a single page of a polling trigger
+
+```ruby
+# frozen_string_literal: true
+
+require_relative 'spec_helper'
+require 'json'
+
+RSpec.describe 'connector', :vcr do
+  let(:settings)  { Workato::Connector::Sdk::Settings.from_default_file }
+  let(:connector) { Workato::Connector::Sdk::Connector.from_file('connector.rb', settings) }
+
+  describe 'test' do
+    it 'establishes valid connection' do
+      expect { connector.test(settings) }.not_to raise_error
+    end
+  end
+
+  describe 'actions.get_post_by_id' do
+    it 'returns a post with the requested id' do
+      out = connector.actions.get_post_by_id.execute(settings, { 'id' => 1 })
+      expect(out['id']).to eq(1)
+      expect(out['title']).to be_a(String)
+    end
+  end
+
+  describe 'triggers.new_posts' do
+    it 'polls and returns events' do
+      res = connector.triggers.new_posts.poll_page(settings, { 'since_id' => 95, 'limit' => 3 })
+      events = res[:events] || res['events']
+      expect(events).to be_a(Array)
+      expect(events.first).to include('id')
+    end
+  end
+end
+```
+
+### 8) `settings.yaml`
+Simple settings file. SDK helpers will pick up automatically.
+- Shape is compatible with `Settings.from_default_file`
+```yaml
+api_base: https://jsonplaceholder.typicode.com
+```
 
 ---
 
