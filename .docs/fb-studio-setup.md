@@ -1,18 +1,19 @@
 # Setup Summary
 
-Below you'll find a **drop‑in Firebase Studio (ex‑IDX)** setup that renders Ruby + the C toolchain required to install and use the `workato-connector-sdk` gem, with a repeatable **Bash** bootstrap.
+Lean, **offline‑friendly** Firebase Studio (ex‑IDX) setup for the `workato-connector-sdk`. You get Ruby + native C deps, a repeatable **Bash** bootstrap, an **offline guard** that prevents accidental HTTP, and a **non‑connected** sample connector (pure Ruby text utilities).
 
 ---
 
 ## Contents
 
-* **Image with Ruby** (in Firebase Studio this is expressed via `.idx/dev.nix`, which defines the VM environment) ([Firebase][1])
-* All **C build deps** required for native gems like `charlock_holmes` (ICU, OpenSSL, pkg-config, gcc, make, etc.). The Workato SDK explicitly depends on `charlock_holmes`, which needs ICU headers/libs. ([GitHub][2])
-* **Gem loadability** and CLI ready: `workato` available via Bundler binstubs.
+* **Image with Ruby** via `.idx/dev.nix` (Firebase Studio reads this to build the VM). ([Firebase][1])
+* All **C build deps** needed for native gems (ICU, OpenSSL, pkg-config, gcc, make, libxml2/xslt, etc.). The SDK depends on native extensions like `charlock_holmes`. ([GitHub][2], [6])
+* **Gem loadability** and CLI ready: `./bin/workato` via Bundler binstubs.
 * **One‑command, repeatable** bootstrap on workspace creation (Bash).
-* **No zsh, no rubocop** (not installed; Bash is explicit).
+* **Offline guard** to block network during dev/test; optional on‑start verification.
+* **No zsh, no rubocop** (Bash only).
 
-> Notes for context: Project IDX was rebranded as **Firebase Studio** and uses **`.idx/dev.nix`** for deterministic dev environments. The SDK currently supports Ruby 2.7–3.1+; the gem requires ≥ 2.7.6. ([Project IDX][3])
+> Notes: Project IDX was rebranded as **Firebase Studio** and uses **`.idx/dev.nix`** for deterministic environments. The SDK supports Ruby 2.7–3.1+; we install Ruby 3.1.x. ([Project IDX][3], [RubyGems][4])
 
 ---
 
@@ -20,7 +21,7 @@ Below you'll find a **drop‑in Firebase Studio (ex‑IDX)** setup that renders 
 
 ### 1) `.idx/dev.nix`
 
-Create this file to define the environment Firebase Studio boots with.
+Defines the environment Firebase Studio boots with. Adds an **onCreate** bootstrap and an **onStart** offline verification run.
 
 ```nix
 { pkgs, lib, ... }: {
@@ -79,16 +80,25 @@ Create this file to define the environment Firebase Studio boots with.
     bootstrap = "bash ./scripts/setup.sh";
     default.openFiles = [ "README.md" ];
   };
+
+  # Optional: prove the SDK loads and our offline connector runs at startup
+  idx.workspace.onStart = {
+    verify_offline = ''
+      export WORKATO_OFFLINE=1
+      export RUBYOPT="-r ./scripts/offline_guard.rb"
+      ruby ./scripts/verify_sdk.rb || true
+    '';
+  };
 }
 ```
 
-**Why this works in Firebase Studio:** Studio uses `.idx/dev.nix` as the single source of truth for your environment (packages, env vars, tasks). You don’t pick a Docker base image; you declare exactly what you need here. ([Firebase][1])
+**Why this works:** Firebase Studio treats `.idx/dev.nix` as the source of truth for packages, env vars, and tasks. You don’t pick a Docker base; you declare what you need. ([Firebase][1], [5])
 
 ---
 
 ### 2) `scripts/setup.sh`
 
-Idempotent Bash bootstrap; installs Bundler, your gems, and a **binstubbed** `workato` CLI.
+Idempotent Bash bootstrap; installs Bundler, your gems, and **binstubs** for the SDK (and RSpec).
 
 ```bash
 #!/usr/bin/env bash
@@ -128,16 +138,16 @@ end
 GEMFILE
 fi
 
-# Pin vendor path; avoid any dev-only groups you don't want
+# Pin vendor path; keep tidy
 bundle config set path "${BUNDLE_PATH}"
 bundle config set clean true
 
 # If ICU path is set by dev.nix, Bundler will pass it to charlock_holmes
 bundle install --retry 2
-bundle binstubs workato-connector-sdk --path=bin
 
-# Create a binstub for the CLI so we can just run ./bin/workato
+# Binstubs for convenience
 bundle binstubs workato-connector-sdk --path=bin
+bundle binstubs rspec-core --path=bin
 
 # Smoke test: verify the gem loads and the CLI responds
 ruby -e 'require "workato-connector-sdk"; puts "SDK loaded: #{Workato::Connector::Sdk::VERSION}"' || {
@@ -148,9 +158,7 @@ ruby -e 'require "workato-connector-sdk"; puts "SDK loaded: #{Workato::Connector
 echo "==> Workato SDK installed and CLI available at ./bin/workato"
 ```
 
-> The SDK depends on `charlock_holmes` which compiles against **ICU**; we’ve included ICU and `pkg-config` in the environment and pass the ICU path to Bundler so the native build Just Works. ([GitHub][2])
-
-Make sure it’s executable if you run it locally:
+Make it executable:
 
 ```bash
 chmod +x scripts/setup.sh
@@ -158,197 +166,184 @@ chmod +x scripts/setup.sh
 
 ---
 
-### 3) Minimal `Gemfile` (if you want it checked in)
+### 3) `scripts/offline_guard.rb`
+
+Blocks network usage when `WORKATO_OFFLINE=1`. This catches common stacks that use `net/http` (e.g., `rest-client`).
 
 ```ruby
-source "https://rubygems.org"
+# blocks net/http (and best-effort EventMachine HTTP) if WORKATO_OFFLINE=1
+return unless ENV['WORKATO_OFFLINE'] == '1'
 
-# Workato SDK gem (Ruby >= 2.7.6)
-gem "workato-connector-sdk", "~> 1.3"
+require 'net/http'
+module Net
+  class HTTP
+    alias __orig_request request
+    def request(*)
+      raise 'Network disabled by WORKATO_OFFLINE=1'
+    end
+  end
+end
+
+begin
+  require 'em-http-request'
+  module EventMachine
+    class HttpRequest
+      %i[head get post put delete].each do |m|
+        define_method(m) { |_ *| raise 'Network disabled by WORKATO_OFFLINE=1' }
+      end
+    end
+  end
+rescue LoadError
+end
 ```
 
-> Recent gem versions require Ruby **≥ 2.7.6**; the Nix file above installs Ruby 3.1.x which is supported by Workato’s SDK docs. ([RubyGems][4])
+---
 
-### 4) `connector.rb` (root)
-Minimal, public API to get working network calls with no secrets. 
-- `base_url` enables relative `get('/post') calls
-- `poll` returns the 3-key struct expected by Workato
+### 4) `connector.rb` (root) — **Non‑connected** sample
+
+Settings‑only connection. No `authorization`, no `base_uri`. Pure Ruby text utilities.
 
 ```ruby
 # frozen_string_literal: true
 
 {
-  title: 'JSONPlaceholder Demo',
+  title: 'Text Utilities (offline)',
 
+  # ------------------------------
+  # CONNECTION: settings only
+  # ------------------------------
   connection: {
+    help: ->() { "Configure default settings for text processing. These can be overridden per action. Environment selection tunes verbosity and limits." },
     fields: [
-      {
-        name: 'api_base',
-        label: 'Base URL',
-        hint: 'Override if needed',
-        default: 'https://jsonplaceholder.typicode.com'
-      }
+      { name: "environment", label: "Environment", optional: false, control_type: "select",
+        options: [["Development", "dev"], ["Staging", "staging"], ["Production", "prod"]] },
+      { name: "chunk_size_default", label: "Default Chunk Size", type: :integer, control_type: "integer", default: 1000 },
+      { name: "chunk_overlap_default", label: "Default Chunk Overlap", type: :integer, control_type: "integer", default: 100 },
+      { name: "similarity_threshold", label: "Similarity Threshold", type: :number, control_type: "number", default: 0.7 }
     ]
-    # No auth needed for JSONPlaceholder.
+    # NOTE: no authorization, no base_uri (we are offline)
   },
 
-  # Use relative paths everywhere else (get '/posts', etc.)
-  base_uri: lambda { |connection|
-    connection['api_base'] || 'https://jsonplaceholder.typicode.com'
-  },
+  # ------------------------------
+  # TEST: local validation (no HTTP)
+  # ------------------------------
+  test: lambda do |connection|
+    errs = []
+    size = connection["chunk_size_default"].to_i
+    over = connection["chunk_overlap_default"].to_i
+    thr  = connection["similarity_threshold"].to_f
+    errs << "chunk_size_default must be > 0" if size <= 0
+    errs << "chunk_overlap_default must be >= 0 and < chunk_size_default" if over < 0 || over >= size
+    errs << "similarity_threshold must be in [0,1]" unless (0.0..1.0).cover?(thr)
+    error(errs.join("; ")) unless errs.empty?
+    { environment: connection["environment"], status: "connected" }
+  end,
 
-  # Called by Workato/SDK to validate the connection. Keep it cheap.
-  test: lambda { |_connection|
-    get('/posts').params(_limit: 1)
-  },
-
-  object_definitions: {
-    post: {
-      # Define with args to keep it "dynamic" per SDK guidance.
-      # (Even if you don't use the args, pass them.) 
-      fields: lambda do |_connection, _config_fields, _object_definitions|
-        [
-          { name: 'userId', type: :integer, label: 'User ID' },
-          { name: 'id',     type: :integer },
-          { name: 'title',  type: :string },
-          { name: 'body',   type: :string }
-        ]
+  # ------------------------------
+  # METHODS: pure-Ruby helpers
+  # ------------------------------
+  methods: {
+    chunk_text: lambda do |text, size, overlap|
+      tokens = text.to_s.split(/\s+/)
+      step   = [1, size - overlap].max
+      slices, i = [], 0
+      while i < tokens.length
+        segment = tokens[i, size] || []
+        break if segment.empty?
+        slices << segment.join(' ')
+        i += step
       end
-    }
+      slices
+    end,
+    cosine_similarity: lambda do |a, b|
+      fa = Hash.new(0); a.to_s.downcase.scan(/\w+/).each { |w| fa[w] += 1 }
+      fb = Hash.new(0); b.to_s.downcase.scan(/\w+/).each { |w| fb[w] += 1 }
+      dot   = (fa.keys | fb.keys).sum { |w| fa[w] * fb[w] }
+      mag_a = Math.sqrt(fa.values.sum { |v| v * v })
+      mag_b = Math.sqrt(fb.values.sum { |v| v * v })
+      mag_a.zero? || mag_b.zero? ? 0.0 : dot.to_f / (mag_a * mag_b)
+    end
   },
 
+  # ------------------------------
+  # ACTIONS: offline processors
+  # ------------------------------
   actions: {
-    get_post_by_id: {
-      title: 'Get post by ID',
-
-      input_fields: lambda do
-        [{ name: 'id', type: :integer, optional: false, hint: 'e.g. 1' }]
+    chunk_text: {
+      title: 'Chunk text',
+      input_fields: lambda do |_|
+        [
+          { name: 'text', type: :string, control_type: 'text-area', optional: false },
+          { name: 'chunk_size', type: :integer, optional: true },
+          { name: 'chunk_overlap', type: :integer, optional: true }
+        ]
       end,
-
-      execute: lambda { |_connection, input|
-        get("/posts/#{input['id']}")
-      },
-
-      output_fields: lambda do |object_definitions, _connection, _config_fields|
-        object_definitions['post']
+      execute: lambda do |connection, input|
+        size = (input['chunk_size'] || connection['chunk_size_default']).to_i
+        over = (input['chunk_overlap'] || connection['chunk_overlap_default']).to_i
+        chunks = call(:chunk_text, input['text'], size, over)
+        { 'count' => chunks.size, 'chunks' => chunks }
       end,
-
-      sample_output: lambda do
-        { 'userId' => 1, 'id' => 1, 'title' => 'sample', 'body' => '...' }
+      output_fields: lambda do
+        [{ name: 'count', type: :integer }, { name: 'chunks', type: :array, of: :string }]
       end
     },
 
-    search_posts: {
-      title: 'Search posts',
-
-      input_fields: lambda do
+    similarity: {
+      title: 'Cosine similarity',
+      input_fields: lambda do |_|
         [
-          { name: 'user_id', type: :integer, optional: true, hint: 'Filter by userId' },
-          { name: 'limit',   type: :integer, optional: true, default: 5 }
+          { name: 'a', type: :string, control_type: 'text-area', optional: false },
+          { name: 'b', type: :string, control_type: 'text-area', optional: false },
+          { name: 'threshold', type: :number, optional: true }
         ]
       end,
-
-      execute: lambda { |_connection, input|
-        params = {}
-        params[:userId] = input['user_id'] if input['user_id']
-        params[:_limit] = input['limit'] || 5
-        records = get('/posts').params(params)
-        { 'records' => records }
-      },
-
-      output_fields: lambda do |object_definitions, _connection, _config_fields|
-        [
-          {
-            name: 'records',
-            type: :array,
-            of: :object,
-            properties: object_definitions['post']
-          }
-        ]
+      execute: lambda do |connection, input|
+        thr   = (input['threshold'] || connection['similarity_threshold']).to_f
+        score = call(:cosine_similarity, input['a'], input['b'])
+        { 'score' => score, 'match' => score >= thr }
       end,
-
-      sample_output: lambda do
-        { 'records' => [{ 'userId' => 1, 'id' => 1, 'title' => 'sample', 'body' => '...' }] }
-      end
-    }
-  },
-
-  triggers: {
-    new_posts: {
-      title: 'New posts by ID (polling)',
-
-      input_fields: lambda do
-        [
-          { name: 'since_id', type: :integer, optional: true, default: 0,
-            hint: 'Only emit posts with id > since_id' },
-          { name: 'limit', type: :integer, optional: true, default: 5,
-            hint: 'Events per poll' }
-        ]
-      end,
-
-      poll: lambda { |_connection, input, closure, _eis, _eos|
-        since_id = (closure && closure['since_id']) || input['since_id'] || 0
-        limit    = input['limit'] || 5
-
-        all = get('/posts') # array of posts
-        new_records = all.select { |r| r['id'].to_i > since_id }
-                         .sort_by { |r| r['id'].to_i }
-        batch = new_records.first(limit)
-        next_since = batch.map { |r| r['id'].to_i }.max || since_id
-
-        {
-          events: batch,
-          next_poll: { 'since_id' => next_since },
-          can_poll_more: new_records.size > limit
-        }
-      },
-
-      dedup: lambda { |record| record['id'].to_s },
-
-      output_fields: lambda do |object_definitions, _connection, _config_fields|
-        object_definitions['post']
-      end,
-
-      sample_output: lambda do
-        { 'userId' => 1, 'id' => 101, 'title' => 'sample', 'body' => '...' }
+      output_fields: lambda do
+        [{ name: 'score', type: :number }, { name: 'match', type: :boolean }]
       end
     }
   }
 }
-
 ```
+
+---
+
 ### 5) `scripts/verify_sdk.rb`
-But does it work?
-- Uses the documented `Settings.from_default_file` and `Connector.from_file(...) helpers.
+
+Tiny “does it load and run offline?” script.
 
 ```ruby
 #!/usr/bin/env ruby
 # frozen_string_literal: true
-
-require 'json'
 require 'workato-connector-sdk'
 
 settings  = Workato::Connector::Sdk::Settings.from_default_file
 connector = Workato::Connector::Sdk::Connector.from_file('connector.rb', settings)
 
-puts "Workato SDK: #{Workato::Connector::Sdk::VERSION}"
-puts "Connector title: #{connector.title || '(no title)'}"
-puts "Actions:  #{connector.actions.keys.join(', ')}"
-puts "Triggers: #{connector.triggers.keys.join(', ')}"
+puts "SDK: #{Workato::Connector::Sdk::VERSION}"
+connector.test(settings) # local validation
 
-# Connection smoke test (should not raise)
-connector.test(settings)
-puts "Connection test: OK"
+sample = "The quick brown fox jumps over the lazy dog. " * 10
+out = connector.actions.chunk_text.execute(settings,
+       { 'text' => sample, 'chunk_size' => 20, 'chunk_overlap' => 5 })
+puts "Chunks: #{out['count']} (first: #{out['chunks'].first.inspect})"
 
-# Run a simple action
-out = connector.actions.get_post_by_id.execute(settings, { 'id' => 1 })
-preview = { 'id' => out['id'], 'title' => out['title'] }
-puts "get_post_by_id(1):\n#{JSON.pretty_generate(preview)}"
+sim = connector.actions.similarity.execute(settings,
+       { 'a' => "alpha beta gamma", 'b' => "alpha beta", 'threshold' => 0.6 })
+puts "Similarity: score=#{sim['score'].round(3)} match=#{sim['match']}"
 ```
 
-## 6) `spec/spec_helper.rb
-Basic RSpec + VCR + WebMock wiring for testing
-- VCR records HTTP once, then replays (recommended pattern per SDK docs)
+---
+
+### 6) `spec/spec_helper.rb`
+
+Block the network in tests by default; VCR is configured but optional.
+
 ```ruby
 # frozen_string_literal: true
 
@@ -357,6 +352,8 @@ require 'rspec'
 require 'webmock/rspec'
 require 'vcr'
 require 'workato-connector-sdk'
+
+WebMock.disable_net_connect!(allow_localhost: true)
 
 VCR.configure do |c|
   c.cassette_library_dir = 'spec/cassettes'
@@ -372,121 +369,125 @@ RSpec.configure do |config|
 end
 ```
 
+---
+
 ### 7) `spec/connector_spec.rb`
-Tiny tests -- connection check, 1 action, 1 trigger
-- Pattern for `action.execute(settings, input)` as recommended by RSpec guide for SDK
-- `poll_page` is helper for testing a single page of a polling trigger
+
+Tests for the offline actions.
 
 ```ruby
 # frozen_string_literal: true
 
 require_relative 'spec_helper'
-require 'json'
 
-RSpec.describe 'connector', :vcr do
+RSpec.describe 'offline connector' do
   let(:settings)  { Workato::Connector::Sdk::Settings.from_default_file }
   let(:connector) { Workato::Connector::Sdk::Connector.from_file('connector.rb', settings) }
 
-  describe 'test' do
-    it 'establishes valid connection' do
-      expect { connector.test(settings) }.not_to raise_error
-    end
+  it 'validates connection settings' do
+    expect { connector.test(settings) }.not_to raise_error
   end
 
-  describe 'actions.get_post_by_id' do
-    it 'returns a post with the requested id' do
-      out = connector.actions.get_post_by_id.execute(settings, { 'id' => 1 })
-      expect(out['id']).to eq(1)
-      expect(out['title']).to be_a(String)
-    end
+  it 'chunks text' do
+    res = connector.actions.chunk_text.execute(settings,
+          { 'text' => 'a b c d e f g', 'chunk_size' => 3, 'chunk_overlap' => 1 })
+    expect(res['count']).to be > 0
+    expect(res['chunks'].first.split.size).to be_between(1, 3).inclusive
   end
 
-  describe 'triggers.new_posts' do
-    it 'polls and returns events' do
-      res = connector.triggers.new_posts.poll_page(settings, { 'since_id' => 95, 'limit' => 3 })
-      events = res[:events] || res['events']
-      expect(events).to be_a(Array)
-      expect(events.first).to include('id')
-    end
+  it 'computes similarity' do
+    res = connector.actions.similarity.execute(settings,
+          { 'a' => 'alpha beta', 'b' => 'alpha', 'threshold' => 0.1 })
+    expect(res['score']).to be_between(0.0, 1.0)
+    expect([true, false]).to include(res['match'])
   end
 end
 ```
 
+---
+
 ### 8) `settings.yaml`
-Simple settings file. SDK helpers will pick up automatically.
-- Shape is compatible with `Settings.from_default_file`
+
+Simple settings file; the SDK helpers pick this up automatically.
+
 ```yaml
-api_base: https://jsonplaceholder.typicode.com
+environment: dev
+chunk_size_default: 1000
+chunk_overlap_default: 100
+similarity_threshold: 0.7
 ```
 
 ---
 
 ## How to use it
 
-1. **Commit** the three files above:
+1. **Commit** these files:
 
 ```
 .idx/dev.nix
-scripts/setup.sh
 Gemfile
+scripts/setup.sh
+scripts/offline_guard.rb
+scripts/verify_sdk.rb
+connector.rb
+spec/spec_helper.rb
+spec/connector_spec.rb
+settings.yaml
 ```
 
-2. **Open in Firebase Studio** (or re-open an existing workspace). The **onCreate** hook will run `scripts/setup.sh` and cache the environment. ([Firebase][5])
+2. **Open in Firebase Studio** (or re‑open). The **onCreate** hook runs `scripts/setup.sh`; the **onStart** hook runs `verify_sdk.rb` with the offline guard. ([Firebase][1], [5])
 
-3. **Verify**:
+3. **Verify manually (offline):**
 
 ```bash
+# Prevent network calls during dev:
+export WORKATO_OFFLINE=1
+export RUBYOPT="-r ./scripts/offline_guard.rb"
+
 ./bin/workato --version
 ruby -r workato-connector-sdk -e 'puts Workato::Connector::Sdk::VERSION'
+
+# Connector self-check and actions:
+./bin/workato exec test
+./bin/workato exec actions.chunk_text.execute --input='{"text":"lorem ipsum dolor sit amet","chunk_size":4,"chunk_overlap":1}'
+./bin/workato exec actions.similarity.execute --input='{"a":"alpha beta","b":"alpha"}'
 ```
 
-4. **Start a connector**:
+4. **Run tests:**
 
 ```bash
-./bin/workato new connectors/my_connector
-EDITOR="nano" ./bin/workato edit settings.yaml.enc   # or your editor
-./bin/workato exec test --connection="My Valid Connection"
+bundle exec rspec
 ```
 
-(Those commands and the project structure come straight from Workato’s SDK docs & repo.) ([GitHub][2])
+Network is blocked by WebMock; tests fail fast if anything tries HTTP.
+
+5. **Temporarily allow network (e.g., when you add a connected action later):**
+
+```bash
+unset WORKATO_OFFLINE
+unset RUBYOPT
+# now connected actions can run; add VCR if you want recorded tests
+```
 
 ---
 
-## Why these choices (quick rationale)
+## Why these choices
 
-* **Nix + `.idx/dev.nix`** → deterministic VM image each time you open Studio; no hand-curating packages on the VM. ([Firebase][1])
-* **ICU + pkg-config** → avoids the common native‑extension install failures with `charlock_holmes`. ([GitHub][6])
-* **Bundler binstubs** → you get `./bin/workato` tied to the vendored gemset; no global gem pollution.
-* **Bash everywhere** → keeps it simple and portable; **no zsh**.
-* **No RuboCop** → you asked not to include it.
-
----
-
-## Optional (nice-to-haves you can add later)
-
-* **RSpec + VCR** for connector unit tests:
-
-  ```ruby
-  # Gemfile
-  gem "rspec"; gem "vcr"; gem "webmock"
-  ```
-
-  This mirrors the structure and tooling Workato shows in its SDK docs. ([GitHub][2])
-
-* **Studio extensions**: If you want richer inline Ruby tooling, keep **Ruby LSP** (already included). It’s the current, lightweight default for VS Code-compatible editors. ([open-vsx.org][7])
+* **Nix + `.idx/dev.nix`** → deterministic VM on each open; zero snowflake drift. ([Firebase][1], [5])
+* **ICU + pkg-config + libxml2/xslt** → native gem installs succeed (`charlock_holmes`, `nokogiri`). ([GitHub][6], [2])
+* **Bundler binstubs** → `./bin/workato` and `./bin/rspec` are project‑scoped; no global gem pollution.
+* **Offline guard** → prevents accidental HTTP in “non‑connected” workflows; reproducible tests.
+* **Bash everywhere** → simple, portable; **no zsh**, **no rubocop**.
 
 ---
 
 ### References
 
-* Firebase Studio uses `.idx/dev.nix` for workspace setup; doc updated Sept 9, 2025. ([Firebase][5])
-* Project IDX → **Firebase Studio** rebrand confirmations. ([Project IDX][3])
-* Workato SDK gem docs & repo (CLI, structure, and `charlock_holmes` dependency). ([GitHub][2])
+* Firebase Studio uses `.idx/dev.nix` for workspace setup; see customization and reference pages. ([Firebase][1], [5])
+* Project IDX → **Firebase Studio** rebrand info. ([Project IDX][3])
+* Workato SDK gem docs & repo (CLI, structure, native deps). ([GitHub][2])
 * Ruby version requirement on current gem releases. ([RubyGems][4])
-
----
-
-If you want me to also drop in a **sample connector skeleton** (pre-wired `connector.rb`, `spec/`, and a tiny `verify_sdk.rb`) I’ll paste that next so you can push and have Studio auto-boot into a runnable demo.
+* `charlock_holmes` native dependency context (ICU). ([GitHub][6])
 
 [1]: https://firebase.google.com/docs/studio/customize-workspace "Customize your Firebase Studio workspace - Google"
 [2]: https://github.com/workato/workato-connector-sdk "GitHub - workato/workato-connector-sdk"
