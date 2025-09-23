@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Ensure bundler is present (Nix gives us bundler, but this is harmless)
+gem install --no-document bundler || true
+
+# Install deps if a Gemfile exists
 if [ -f Gemfile ]; then
   bundle install
 fi
 
-ruby -v
-bundle exec ruby -e 'require "rubygems"; puts Gem.loaded_specs.key?("workato-connector-sdk") ? "workato-connector-sdk " + Gem.loaded_specs["workato-connector-sdk"].version.to_s : "workato-connector-sdk not in Gemfile"'
+# Generate a simple binstub for convenience (optional)
+if [ -f Gemfile ]; then
+  bundle binstubs --all || true
+fi
